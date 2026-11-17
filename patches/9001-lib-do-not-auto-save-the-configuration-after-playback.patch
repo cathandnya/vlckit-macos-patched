@@ -1,0 +1,58 @@
+From d46f24e564e6264e293fb6de09de469a447984f3 Mon Sep 17 00:00:00 2001
+From: nya <home@cathand.org>
+Date: Tue, 17 Nov 2026 16:09:23 +0900
+Subject: [PATCH] lib: do not auto-save the configuration after playback/parse
+
+VLCKit's "lib: save configuration after playback/parse" patch calls
+config_AutoSaveConfigFile() whenever an input is closed and whenever a
+parsed media is released, without checking "ignore-config".
+
+config_AutoSaveConfigFile() takes the config read lock and then calls
+config_SaveConfigFile(), which takes the read lock again. If another
+thread waits for the write lock in between (config_PutPsz() from the
+auhal audio output on close, for example), the second read lock never
+succeeds and every thread using the config lock hangs.
+
+Drop these calls. libvlc_InternalCleanup() still saves when
+"ignore-config" is disabled, as upstream does.
+---
+ lib/media.c        | 2 --
+ lib/media_player.c | 2 --
+ 2 files changed, 4 deletions(-)
+
+diff --git a/lib/media.c b/lib/media.c
+index b46a4c7..2b8ee1c 100644
+--- a/lib/media.c
++++ b/lib/media.c
+@@ -612,8 +612,6 @@ void libvlc_media_release( libvlc_media_t *p_md )
+     libvlc_event_send( &p_md->event_manager, &event );
+ 
+     libvlc_event_manager_destroy( &p_md->event_manager );
+-    if( p_md->is_parsed )
+-        config_AutoSaveConfigFile( p_md->p_libvlc_instance->p_libvlc_int );
+     libvlc_release( p_md->p_libvlc_instance );
+     free( p_md );
+ }
+diff --git a/lib/media_player.c b/lib/media_player.c
+index 31f3404..dbed7ab 100644
+--- a/lib/media_player.c
++++ b/lib/media_player.c
+@@ -225,7 +225,6 @@ release_input_thread(libvlc_media_player_t *mp, bool async)
+         if (!async)
+         {
+             input_Close(input);
+-            config_AutoSaveConfigFile(mp);
+         }
+         else
+         {
+@@ -1218,7 +1217,6 @@ worker_thread(void *data)
+         unlock_input(mp);
+ 
+         input_Close(input);
+-        config_AutoSaveConfigFile(mp);
+ 
+         lock_input(mp);
+         mp->worker.close_input = NULL;
+-- 
+2.56.0
+
